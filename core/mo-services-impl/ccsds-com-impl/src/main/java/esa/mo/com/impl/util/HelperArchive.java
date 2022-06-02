@@ -59,7 +59,7 @@ import org.ccsds.moims.mo.mal.transport.MALMessageHeader;
  * A Helper class for the COM Archive.
  */
 public class HelperArchive {
-
+    public static Logger LOGGER = Logger.getLogger(HelperArchive.class.getName());
     private enum ToBeReturned {
         OBJECT_BODY, ARCHIVE_DETAILS, COM_OBJECT
     }
@@ -407,18 +407,18 @@ public class HelperArchive {
     private static Object getFromArchive(final Object archiveService, final ObjectType objType,
             final IdentifierList domain, final LongList objIds, final ToBeReturned toBeReturned) {
         if (archiveService == null) { // If there's no archive...
-            Logger.getLogger(HelperArchive.class.getName()).log(Level.INFO,
+            LOGGER.log(Level.INFO,
                     "The Archive service provided contains a null pointer!");
             return null;
         }
 
         // This class will receive the retrieve object
-        class ArchiveRetrieveAdapter1 extends RetrieveInteraction {
+        class LocalArchiveRetrieveAdapter extends RetrieveInteraction {
 
             private ElementList obj;
             private ElementList objDetails;
 
-            public ArchiveRetrieveAdapter1(MALInvoke interaction) {
+            public LocalArchiveRetrieveAdapter(MALInvoke interaction) {
                 super(interaction);
             }
 
@@ -482,13 +482,13 @@ public class HelperArchive {
 
         }
 
-        class ArchiveRetrieveAdapter2 extends ArchiveAdapter {
+        class RemoteArchiveRetrieveAdapter extends ArchiveAdapter {
 
             private ElementList obj;
             private ElementList objDetails;
             private final Semaphore semaphore = new Semaphore(0);
 
-            ArchiveRetrieveAdapter2() {
+            RemoteArchiveRetrieveAdapter() {
                 super();
             }
 
@@ -499,7 +499,7 @@ public class HelperArchive {
             @Override
             public void retrieveAckErrorReceived(MALMessageHeader msgHeader,
                     MALStandardError error, Map qosProperties) {
-                Logger.getLogger(HelperArchive.class.getName()).log(Level.SEVERE,
+                LOGGER.log(Level.SEVERE,
                         "The Archive returned the following error: {0}", error.toString());
                 semaphore.release();
             }
@@ -530,7 +530,7 @@ public class HelperArchive {
             @Override
             public void retrieveResponseErrorReceived(MALMessageHeader msgHeader,
                     MALStandardError error, Map qosProperties) {
-                Logger.getLogger(HelperArchive.class.getName()).log(Level.SEVERE,
+                LOGGER.log(Level.SEVERE,
                         "The Archive returned the following error: {0}", error.toString());
 
                 semaphore.release();
@@ -576,7 +576,7 @@ public class HelperArchive {
                 try {
                     semaphore.acquire();
                 } catch (InterruptedException ex) {
-                    Logger.getLogger(HelperArchive.class.getName()).log(Level.SEVERE, null, ex);
+                    LOGGER.log(Level.SEVERE, null, ex);
                 }
             }
 
@@ -585,7 +585,7 @@ public class HelperArchive {
         // The submitted Archive is a provider instance...
         if (archiveService instanceof ArchiveHandler) {
 
-            ArchiveRetrieveAdapter1 adapter = new ArchiveRetrieveAdapter1(null);
+            LocalArchiveRetrieveAdapter adapter = new LocalArchiveRetrieveAdapter(null);
 
             Object obj = null;
             // Retrieve the object
@@ -593,13 +593,13 @@ public class HelperArchive {
                 try {
                     ((ArchiveHandler) archiveService).retrieve(objType, domain, objIds, adapter);
                 } catch (MALInteractionException ex2) {
-                    Logger.getLogger(HelperArchive.class.getName()).log(Level.INFO,
+                    LOGGER.log(Level.INFO,
                             "(MALInteractionException) The object {0}, domain = {1}, objIds = {2} could not be retrieved from the Archive! A null will be returned!",
                             new Object[]{objType.toString(), HelperMisc.domain2domainId(domain),
                                 objIds.toString()});
                     return null;
                 } catch (MALException ex2) {
-                    Logger.getLogger(HelperArchive.class.getName()).log(Level.INFO,
+                    LOGGER.log(Level.INFO,
                             "(MALException) The object could not be retrieved from the Archive! A null will be returned! {0}", ex2);
                     return null;
                 }
@@ -622,18 +622,18 @@ public class HelperArchive {
 
         // The submitted Archive is a consumer instance...
         else if (archiveService instanceof ArchiveStub) {
-            ArchiveRetrieveAdapter2 adapter = new ArchiveRetrieveAdapter2();
+            RemoteArchiveRetrieveAdapter adapter = new RemoteArchiveRetrieveAdapter();
             Object obj = null;
 
             try {
                 ((ArchiveStub) archiveService).retrieve(objType, domain, objIds, adapter);
             } catch (MALInteractionException ex2) {
-                Logger.getLogger(HelperArchive.class.getName()).log(Level.INFO,
+                LOGGER.log(Level.INFO,
                         "(debug code: 03) The object could not be retrieved from the Archive! A null will be returned! "
                         + "This problem usually occurs when there are problems on the layers below, either MAL or Transport Binding Layer.");
                 return null;
             } catch (MALException ex2) {
-                Logger.getLogger(HelperArchive.class.getName()).log(Level.INFO,
+                LOGGER.log(Level.INFO,
                         "(debug code: 04) The object could not be retrieved from the Archive! A null will be returned! {0}", ex2);
                 return null;
             }
@@ -656,7 +656,7 @@ public class HelperArchive {
         }
         else
         {
-            Logger.getLogger(HelperArchive.class.getName()).log(Level.SEVERE,
+            LOGGER.log(Level.SEVERE,
                     "The Archive service provided ({0}) is not a supported class!",
                     archiveService.getClass().toString());
         }
