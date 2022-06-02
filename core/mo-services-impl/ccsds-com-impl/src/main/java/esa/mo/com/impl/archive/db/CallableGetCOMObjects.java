@@ -15,9 +15,8 @@ import org.ccsds.moims.mo.mal.structures.LongList;
 import esa.mo.com.impl.archive.entities.COMObjectEntity;
 
 final class CallableGetCOMObjects implements Callable<List<COMObjectEntity>> {
-        /**
-     *
-     */
+
+
     private final TransactionsProcessor transactionsProcessor;
         private final LongList ids;
         private final Integer domainId;

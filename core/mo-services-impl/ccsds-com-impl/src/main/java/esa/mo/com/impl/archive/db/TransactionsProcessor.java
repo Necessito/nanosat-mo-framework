@@ -23,7 +23,6 @@ package esa.mo.com.impl.archive.db;
 import esa.mo.com.impl.archive.entities.COMObjectEntity;
 import esa.mo.com.impl.provider.ArchiveManager;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -64,11 +63,11 @@ public class TransactionsProcessor {
 
     // This executor is expecting "short-lived" runnables that generate Events.
     // 2 Threads minimum because we need to acquire the lock from 2 different tasks during startup
-    private final ExecutorService generalExecutor = Executors.newFixedThreadPool(2,
+    final ExecutorService generalExecutor = Executors.newFixedThreadPool(2,
             new DBThreadFactory("Archive_GeneralProcessor"));
     private final AtomicBoolean sequencialStoring;
 
-    private final LinkedBlockingQueue<StoreCOMObjectsContainer> storeQueue;
+    final LinkedBlockingQueue<StoreCOMObjectsContainer> storeQueue;
 
     public TransactionsProcessor(DatabaseBackend dbBackend) {
         this.dbBackend = dbBackend;
@@ -108,13 +107,18 @@ public class TransactionsProcessor {
             final Long objId) {
         this.sequencialStoring.set(false); // Sequential stores can no longer happen otherwise we break order
 
-        Future<COMObjectEntity> future = dbTransactionsExecutor.submit(new CallableGetCOMObject(this, domainId, objId, objTypeId));
+        LongList ids = new LongList();
+        ids.add(objId);
+        Future<List<COMObjectEntity>> future = dbTransactionsExecutor.submit(new CallableGetCOMObjects(this, ids, domainId, objTypeId));
 
         try {
-            return future.get();
-        } catch (InterruptedException ex) {
-            LOGGER.log(Level.SEVERE, null, ex);
-        } catch (ExecutionException ex) {
+            List<COMObjectEntity> ret = future.get();
+            if (ret.size() == 1) {
+                return ret.get(0);
+            } else {
+                return null;
+            }
+        } catch (InterruptedException | ExecutionException ex) {
             LOGGER.log(Level.SEVERE, null, ex);
         }
 
@@ -173,48 +177,6 @@ public class TransactionsProcessor {
         return null;
     }
 
-    private void persistObjects(final ArrayList<COMObjectEntity> perObjs) {
-        Connection c = dbBackend.getConnection();
-        String stm = "INSERT INTO COMObjectEntity (objectTypeId, objId, domainId, network, objBody, providerURI, relatedLink, sourceLinkDomainId, sourceLinkObjId, sourceLinkObjectTypeId, timestampArchiveDetails) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-        try {
-            c.setAutoCommit(false);
-            PreparedStatement getCOMObject = c.prepareStatement(stm);
-
-            for (int i = 0; i < perObjs.size(); i++) { // 6.510 ms per cycle
-                COMObjectEntity obj = perObjs.get(i);
-                getCOMObject.setObject(1, obj.getObjectTypeId());
-                getCOMObject.setObject(2, obj.getObjectId());
-                getCOMObject.setObject(3, obj.getDomainId());
-                getCOMObject.setObject(4, obj.getNetwork());
-                getCOMObject.setObject(5, obj.getObjectEncoded());
-                getCOMObject.setObject(6, obj.getProviderURI());
-                getCOMObject.setObject(7, obj.getRelatedLink());
-                getCOMObject.setObject(8, obj.getSourceLink().getDomainId());
-                getCOMObject.setObject(9, obj.getSourceLink().getObjId());
-                getCOMObject.setObject(10, obj.getSourceLink().getObjectTypeId());
-                getCOMObject.setObject(11, obj.getTimestamp().getValue());
-                getCOMObject.addBatch();
-
-                // Flush every 1k objects...
-                if (i != 0) {
-                    if ((i % 1000) == 0) {
-                        LOGGER.log(Level.FINE,
-                                "Flushing the data after 1000 serial stores...");
-
-                        getCOMObject.executeBatch();
-                        getCOMObject.clearBatch();
-                    }
-                }
-            }
-
-            getCOMObject.executeBatch();
-            c.setAutoCommit(true);
-        } catch (SQLException ex) {
-            LOGGER.log(Level.SEVERE, null, ex);
-        }
-    }
-
     public void insert(final ArrayList<COMObjectEntity> perObjs, final Runnable publishEvents) {
         final boolean isSequential = this.sequencialStoring.get();
         final StoreCOMObjectsContainer container = new StoreCOMObjectsContainer(perObjs, isSequential);
@@ -228,165 +190,20 @@ public class TransactionsProcessor {
                     "Something went wrong...", ex);
         }
 
-        dbTransactionsExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                StoreCOMObjectsContainer container = storeQueue.poll();
-                if (container != null) {
-                    try {
-                        dbBackend.getAvailability().acquire();
-                    } catch (InterruptedException ex) {
-                        LOGGER.log(Level.SEVERE, null, ex);
-                    }
-
-                    ArrayList<COMObjectEntity> objs = new ArrayList<>();
-                    objs.addAll(container.getPerObjs());
-
-                    while (true) {
-                        container = storeQueue.peek(); // get next if there is one available
-
-                        if (container == null || !container.isContinuous()) {
-                            break;
-                        }
-
-                        objs.addAll(storeQueue.poll().getPerObjs());
-                    }
-
-                    persistObjects(objs); // store
-                    dbBackend.getAvailability().release();
-                }
-
-                if(publishEvents != null) {
-                  generalExecutor.submit(publishEvents);
-                }
-            }
-        });
+        dbTransactionsExecutor.execute(new RunnableInsert(this, publishEvents));
     }
 
     public void remove(final Integer objTypeId, final Integer domainId,
             final LongList objIds, final Runnable publishEvents) {
         this.sequencialStoring.set(false); // Sequential stores can no longer happen otherwise we break order
 
-        dbTransactionsExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    dbBackend.getAvailability().acquire();
-                } catch (InterruptedException ex) {
-                    LOGGER.log(Level.SEVERE, null, ex);
-                }
-
-                try {
-                    Connection c = dbBackend.getConnection();
-                    c.setAutoCommit(false);
-
-                    String stm = "DELETE FROM COMObjectEntity WHERE (((objectTypeId = ?) AND (domainId = ?) AND (objId = ?)))";
-                    PreparedStatement delete = c.prepareStatement(stm);
-
-                    // Generate the object Ids if needed and the persistence objects to be removed
-                    for (int i = 0; i < objIds.size(); i++) {
-                        delete.setInt(1, objTypeId);
-                        delete.setInt(2, domainId);
-                        delete.setLong(3, objIds.get(i));
-                        delete.addBatch();
-
-                        // Flush every 1k objects...
-                        if (i != 0) {
-                            if ((i % 1000) == 0) {
-                                LOGGER.log(Level.FINE,
-                                        "Flushing the data after 1000 serial stores...");
-
-                                delete.executeBatch();
-                                delete.clearBatch();
-                            }
-                        }
-                    }
-
-                    delete.executeBatch();
-                    c.setAutoCommit(true);
-                } catch (SQLException ex) {
-                    LOGGER.log(Level.SEVERE, null, ex);
-                }
-
-                dbBackend.getAvailability().release();
-              if(publishEvents != null) {
-                generalExecutor.submit(publishEvents);
-              }
-                vacuum();
-            }
-        });
+        dbTransactionsExecutor.execute(new RunnableRemove(this, publishEvents, objTypeId, domainId, objIds));
     }
 
     public void update(final ArrayList<COMObjectEntity> newObjs, final Runnable publishEvents) {
         this.sequencialStoring.set(false); // Sequential stores can no longer happen otherwise we break order
 
-        dbTransactionsExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    dbBackend.getAvailability().acquire();
-                } catch (InterruptedException ex) {
-                    LOGGER.log(Level.SEVERE, null, ex);
-                }
-
-                try {
-                    Connection c = dbBackend.getConnection();
-                    c.setAutoCommit(false);
-
-                    StringBuilder stm = new StringBuilder();
-                    stm.append("UPDATE COMObjectEntity ");
-                    stm.append("SET objectTypeId = ?, objId = ?, domainId = ?, network = ?, objBody = ?, ");
-                    stm.append("providerURI = ?, relatedLink = ?, sourceLinkDomainId = ?, ");
-                    stm.append("sourceLinkObjId = ?, sourceLinkObjectTypeId = ?, timestampArchiveDetails = ? ");
-                    stm.append("WHERE (((objectTypeId = ?) AND (domainId = ?) AND (objId = ?)));");
-
-                    PreparedStatement update = c.prepareStatement(stm.toString());
-
-                    // Generate the object Ids if needed and the persistence objects to be removed
-                    for (int i = 0; i < newObjs.size(); i++) {
-                        COMObjectEntity obj = newObjs.get(i);
-                        update.setObject(1, obj.getObjectTypeId());
-                        update.setObject(2, obj.getObjectId());
-                        update.setObject(3, obj.getDomainId());
-                        update.setObject(4, obj.getNetwork());
-                        update.setObject(5, obj.getObjectEncoded());
-                        update.setObject(6, obj.getProviderURI());
-                        update.setObject(7, obj.getRelatedLink());
-                        update.setObject(8, obj.getSourceLink().getDomainId());
-                        update.setObject(9, obj.getSourceLink().getObjId());
-                        update.setObject(10, obj.getSourceLink().getObjectTypeId());
-                        update.setObject(11, obj.getTimestamp().getValue());
-
-                        update.setObject(12, newObjs.get(i).getObjectTypeId());
-                        update.setObject(13, newObjs.get(i).getDomainId());
-                        update.setObject(14, newObjs.get(i).getObjectId());
-                        update.addBatch();
-
-                        // Flush every 1k objects...
-                        if (i != 0) {
-                            if ((i % 1000) == 0) {
-                                LOGGER.log(Level.FINE,
-                                        "Flushing the data after 1000 serial stores...");
-
-                                update.executeBatch();
-                                update.clearBatch();
-                            }
-                        }
-                    }
-
-                    update.executeBatch();
-                    c.setAutoCommit(true);
-                } catch (SQLException ex) {
-                    LOGGER.log(Level.SEVERE, null, ex);
-                }
-
-                dbBackend.getAvailability().release();
-
-              if(publishEvents != null) {
-                generalExecutor.submit(publishEvents);
-              }
-            }
-        });
+        dbTransactionsExecutor.execute(new RunnableUpdate(this, publishEvents, newObjs));
     }
 
   enum QueryType {
