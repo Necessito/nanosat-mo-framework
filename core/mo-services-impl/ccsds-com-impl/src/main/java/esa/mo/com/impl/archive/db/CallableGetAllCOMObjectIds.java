@@ -9,7 +9,7 @@ import java.util.logging.Level;
 
 import org.ccsds.moims.mo.mal.structures.LongList;
 
-final class CallableGetAllCOMObjects implements Callable<LongList> {
+final class CallableGetAllCOMObjectIds implements Callable<LongList> {
     /**
  *
  */
@@ -17,7 +17,7 @@ private final TransactionsProcessor transactionsProcessor;
     private final Integer domainId;
     private final Integer objTypeId;
 
-    CallableGetAllCOMObjects(TransactionsProcessor transactionsProcessor, Integer domainId, Integer objTypeId) {
+    CallableGetAllCOMObjectIds(TransactionsProcessor transactionsProcessor, Integer domainId, Integer objTypeId) {
         this.transactionsProcessor = transactionsProcessor;
         this.domainId = domainId;
         this.objTypeId = objTypeId;
@@ -32,14 +32,12 @@ private final TransactionsProcessor transactionsProcessor;
         }
 
         LongList objIds = new LongList();
-        Connection c = this.transactionsProcessor.dbBackend.getConnection();
 
         try {
-            String stm = "SELECT objId FROM COMObjectEntity WHERE ((objectTypeId = ?) AND (domainId = ?))";
-            PreparedStatement getCOMObject = c.prepareStatement(stm);
-            getCOMObject.setInt(1, objTypeId);
-            getCOMObject.setInt(2, domainId);
-            ResultSet rs = getCOMObject.executeQuery();
+            PreparedStatement stmt = this.transactionsProcessor.dbBackend.getPreparedStatements().getSelectAllCOMObjects();
+            stmt.setInt(1, objTypeId);
+            stmt.setInt(2, domainId);
+            ResultSet rs = stmt.executeQuery();
 
             while (rs.next()) {
                 objIds.add(TransactionsProcessor.convert2Long(rs.getObject(1)));

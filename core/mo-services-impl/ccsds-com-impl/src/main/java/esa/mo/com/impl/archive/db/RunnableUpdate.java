@@ -34,14 +34,8 @@ private final TransactionsProcessor transactionsProcessor;
             Connection c = this.transactionsProcessor.dbBackend.getConnection();
             c.setAutoCommit(false);
 
-            StringBuilder stm = new StringBuilder();
-            stm.append("UPDATE COMObjectEntity ");
-            stm.append("SET objectTypeId = ?, objId = ?, domainId = ?, network = ?, objBody = ?, ");
-            stm.append("providerURI = ?, relatedLink = ?, sourceLinkDomainId = ?, ");
-            stm.append("sourceLinkObjId = ?, sourceLinkObjectTypeId = ?, timestampArchiveDetails = ? ");
-            stm.append("WHERE (((objectTypeId = ?) AND (domainId = ?) AND (objId = ?)));");
 
-            PreparedStatement update = c.prepareStatement(stm.toString());
+            PreparedStatement update = transactionsProcessor.dbBackend.getPreparedStatements().getUpdateCOMObjects();
 
             // Generate the object Ids if needed and the persistence objects to be removed
             for (int i = 0; i < newObjs.size(); i++) {
@@ -80,7 +74,6 @@ private final TransactionsProcessor transactionsProcessor;
         } catch (SQLException ex) {
             TransactionsProcessor.LOGGER.log(Level.SEVERE, null, ex);
         }
-
         this.transactionsProcessor.dbBackend.getAvailability().release();
 
       if(publishEvents != null) {

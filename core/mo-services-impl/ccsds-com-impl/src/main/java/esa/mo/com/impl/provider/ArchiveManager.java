@@ -194,9 +194,7 @@ public class ArchiveManager {
 
                 try {
                     Connection c = dbBackend.getConnection();
-                    String stm = "DELETE FROM COMObjectEntity";
-                    PreparedStatement delete = c.prepareStatement(stm);
-                    delete.execute();
+                    c.createStatement().execute("DELETE FROM COMObjectEntity");
                 } catch (SQLException ex) {
                     Logger.getLogger(TransactionsProcessor.class.getName()).log(Level.SEVERE, null, ex);
                 }

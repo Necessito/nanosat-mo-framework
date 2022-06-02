@@ -2,6 +2,7 @@ package esa.mo.com.impl.archive.db;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -43,7 +44,7 @@ final class RunnableInsert implements Runnable {
                 objs.addAll(this.transactionsProcessor.storeQueue.poll().getPerObjs());
             }
 
-            this.transactionsProcessor.persistObjects(objs); // store
+            persistObjects(objs); // store
             this.transactionsProcessor.dbBackend.getAvailability().release();
         }
 
@@ -53,27 +54,25 @@ final class RunnableInsert implements Runnable {
     }
     
     void persistObjects(final ArrayList<COMObjectEntity> perObjs) {
-        Connection c = this.transactionsProcessor.dbBackend.getConnection();
-        String stm = "INSERT INTO COMObjectEntity (objectTypeId, objId, domainId, network, objBody, providerURI, relatedLink, sourceLinkDomainId, sourceLinkObjId, sourceLinkObjectTypeId, timestampArchiveDetails) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
         try {
+            Connection c = this.transactionsProcessor.dbBackend.getConnection();
             c.setAutoCommit(false);
-            PreparedStatement getCOMObject = c.prepareStatement(stm);
+            PreparedStatement insertStmt = transactionsProcessor.dbBackend.getPreparedStatements().getInsertCOMObjects();
 
             for (int i = 0; i < perObjs.size(); i++) { // 6.510 ms per cycle
                 COMObjectEntity obj = perObjs.get(i);
-                getCOMObject.setObject(1, obj.getObjectTypeId());
-                getCOMObject.setObject(2, obj.getObjectId());
-                getCOMObject.setObject(3, obj.getDomainId());
-                getCOMObject.setObject(4, obj.getNetwork());
-                getCOMObject.setObject(5, obj.getObjectEncoded());
-                getCOMObject.setObject(6, obj.getProviderURI());
-                getCOMObject.setObject(7, obj.getRelatedLink());
-                getCOMObject.setObject(8, obj.getSourceLink().getDomainId());
-                getCOMObject.setObject(9, obj.getSourceLink().getObjId());
-                getCOMObject.setObject(10, obj.getSourceLink().getObjectTypeId());
-                getCOMObject.setObject(11, obj.getTimestamp().getValue());
-                getCOMObject.addBatch();
+                insertStmt.setObject(1, obj.getObjectTypeId());
+                insertStmt.setObject(2, obj.getObjectId());
+                insertStmt.setObject(3, obj.getDomainId());
+                insertStmt.setObject(4, obj.getNetwork());
+                insertStmt.setObject(5, obj.getObjectEncoded());
+                insertStmt.setObject(6, obj.getProviderURI());
+                insertStmt.setObject(7, obj.getRelatedLink());
+                insertStmt.setObject(8, obj.getSourceLink().getDomainId());
+                insertStmt.setObject(9, obj.getSourceLink().getObjId());
+                insertStmt.setObject(10, obj.getSourceLink().getObjectTypeId());
+                insertStmt.setObject(11, obj.getTimestamp().getValue());
+                insertStmt.addBatch();
 
                 // Flush every 1k objects...
                 if (i != 0) {
@@ -81,13 +80,13 @@ final class RunnableInsert implements Runnable {
                         LOGGER.log(Level.FINE,
                                 "Flushing the data after 1000 serial stores...");
 
-                        getCOMObject.executeBatch();
-                        getCOMObject.clearBatch();
+                        insertStmt.executeBatch();
+                        insertStmt.clearBatch();
                     }
                 }
             }
 
-            getCOMObject.executeBatch();
+            insertStmt.executeBatch();
             c.setAutoCommit(true);
         } catch (SQLException ex) {
             LOGGER.log(Level.SEVERE, null, ex);

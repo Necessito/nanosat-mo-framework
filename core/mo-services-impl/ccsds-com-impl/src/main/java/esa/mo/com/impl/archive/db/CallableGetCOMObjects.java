@@ -1,5 +1,6 @@
 package esa.mo.com.impl.archive.db;
 
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -41,13 +42,13 @@ final class CallableGetCOMObjects implements Callable<List<COMObjectEntity>> {
             Connection c = this.transactionsProcessor.dbBackend.getConnection();
 
             try {
-                String idsString = ids.stream().map(Object::toString).collect(Collectors.joining(", "));
-                String stm = "SELECT objectTypeId, domainId, objId, timestampArchiveDetails, providerURI, network, sourceLinkObjectTypeId, sourceLinkDomainId, sourceLinkObjId, relatedLink, objBody FROM COMObjectEntity WHERE ((objectTypeId = ?) AND (domainId = ?) AND (objId in ("+ idsString +")))";
-                PreparedStatement getCOMObject = c.prepareStatement(stm);
-                getCOMObject.setInt(1, objTypeId);
-                getCOMObject.setInt(2, domainId);
+                PreparedStatement stmt = this.transactionsProcessor.dbBackend.getPreparedStatements().getSelectCOMObjects();
+                Array idsArray = c.createArrayOf("BIGINT", ids.toArray());
+                stmt.setInt(1, objTypeId);
+                stmt.setInt(2, domainId);
+                stmt.setArray(3, idsArray);
 
-                ResultSet rs = getCOMObject.executeQuery();
+                ResultSet rs = stmt.executeQuery();
 
                 while (rs.next()) {
                     perObjs.add(new COMObjectEntity(

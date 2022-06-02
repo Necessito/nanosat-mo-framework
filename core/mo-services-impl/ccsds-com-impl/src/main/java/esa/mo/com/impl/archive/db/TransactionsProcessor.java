@@ -151,11 +151,11 @@ public class TransactionsProcessor {
         IntegerList domains = new IntegerList();
         domains.add(domainId);
         ArchiveQuery archiveQuery = new ArchiveQuery(null, null, null, 0L, null, null, null, null, null);
-        CallableQuery query = new CallableQuery(this, types, archiveQuery, domains, null, null, null, null);
-        Future<Object> future = dbTransactionsExecutor.submit(query);
+        CallableSelectQuery query = new CallableSelectQuery(this, types, archiveQuery, domains, null, null, null, null);
+        Future<ArrayList<COMObjectEntity>> future = dbTransactionsExecutor.submit(query);
 
         try {
-            return (List<COMObjectEntity>)future.get();
+            return future.get();
         } catch (InterruptedException | ExecutionException ex) {
             LOGGER.log(Level.SEVERE, null, ex);
         }
@@ -166,7 +166,7 @@ public class TransactionsProcessor {
     public LongList getAllCOMObjectsIds(final Integer objTypeId, final Integer domainId) {
         this.sequencialStoring.set(false); // Sequential stores can no longer happen otherwise we break order
 
-        Future<LongList> future = dbTransactionsExecutor.submit(new CallableGetAllCOMObjects(this, domainId, objTypeId));
+        Future<LongList> future = dbTransactionsExecutor.submit(new CallableGetAllCOMObjectIds(this, domainId, objTypeId));
 
         try {
             return future.get();
@@ -206,49 +206,18 @@ public class TransactionsProcessor {
         dbTransactionsExecutor.execute(new RunnableUpdate(this, publishEvents, newObjs));
     }
 
-  enum QueryType {
-    SELECT("SELECT"), DELETE("DELETE");
-    private final String queryPrefix;
-    private QueryType(String queryPrefix) {
-      this.queryPrefix = queryPrefix;
-    }
-    public String getQueryPrefix() {
-      return queryPrefix;
-    }
-  }
-  public static String generateQueryStringFromLists(final String field, final IntegerList list) {
-    if (list.isEmpty()) {
-      return "";
-    }
-
-    if (list.size() == 1) {
-      return field + "=" + list.get(0) + " AND ";
-    }
-
-    StringBuilder stringForWildcards = new StringBuilder("(");
-
-    for (Integer id : list) {
-      stringForWildcards.append(field).append("=").append(id).append(" OR ");
-    }
-
-    // Remove the " OR " par of it!
-    stringForWildcards = new StringBuilder(stringForWildcards.substring(0, stringForWildcards.length() - 4));
-
-    return stringForWildcards + ") AND ";
-  }
-
   public ArrayList<COMObjectEntity> query(final IntegerList objTypeIds,
       final ArchiveQuery archiveQuery, final IntegerList domainIds,
       final Integer providerURIId, final Integer networkId,
       final SourceLinkContainer sourceLink, final QueryFilter filter) {
     this.sequencialStoring.set(false); // Sequential stores can no longer happen otherwise we break order
-    final CallableQuery task = new CallableQuery(this, objTypeIds, archiveQuery,
+    final CallableSelectQuery task = new CallableSelectQuery(this, objTypeIds, archiveQuery,
         domainIds, providerURIId, networkId, sourceLink, filter);
 
-    Future<Object> future = dbTransactionsExecutor.submit(task);
+    Future<ArrayList<COMObjectEntity>> future = dbTransactionsExecutor.submit(task);
 
     try {
-      return (ArrayList<COMObjectEntity>)future.get();
+      return future.get();
     } catch (InterruptedException | ExecutionException ex) {
       LOGGER.log(Level.SEVERE, null, ex);
     }
@@ -261,13 +230,13 @@ public class TransactionsProcessor {
       final Integer providerURIId, final Integer networkId,
       final SourceLinkContainer sourceLink, final QueryFilter filter) {
     this.sequencialStoring.set(false); // Sequential stores can no longer happen otherwise we break order
-    final CallableQuery task = new CallableQuery(this, objTypeIds, archiveQuery,
-        domainIds, providerURIId, networkId, sourceLink, filter, QueryType.DELETE);
+    final CallableDeleteQuery task = new CallableDeleteQuery(this, objTypeIds, archiveQuery,
+        domainIds, providerURIId, networkId, sourceLink, filter);
 
-    Future<Object> future = dbTransactionsExecutor.submit(task);
+    Future<Integer> future = dbTransactionsExecutor.submit(task);
 
     try {
-      return (Integer)future.get();
+      return future.get();
     } catch (InterruptedException | ExecutionException ex) {
       LOGGER.log(Level.SEVERE, null, ex);
     }

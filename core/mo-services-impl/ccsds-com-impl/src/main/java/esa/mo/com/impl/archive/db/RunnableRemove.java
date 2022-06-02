@@ -37,15 +37,14 @@ private final TransactionsProcessor transactionsProcessor;
             Connection c = this.transactionsProcessor.dbBackend.getConnection();
             c.setAutoCommit(false);
 
-            String stm = "DELETE FROM COMObjectEntity WHERE (((objectTypeId = ?) AND (domainId = ?) AND (objId = ?)))";
-            PreparedStatement delete = c.prepareStatement(stm);
+            PreparedStatement deleteStmt = transactionsProcessor.dbBackend.getPreparedStatements().getDeleteCOMObjects();
 
             // Generate the object Ids if needed and the persistence objects to be removed
             for (int i = 0; i < objIds.size(); i++) {
-                delete.setInt(1, objTypeId);
-                delete.setInt(2, domainId);
-                delete.setLong(3, objIds.get(i));
-                delete.addBatch();
+                deleteStmt.setInt(1, objTypeId);
+                deleteStmt.setInt(2, domainId);
+                deleteStmt.setLong(3, objIds.get(i));
+                deleteStmt.addBatch();
 
                 // Flush every 1k objects...
                 if (i != 0) {
@@ -53,13 +52,13 @@ private final TransactionsProcessor transactionsProcessor;
                         TransactionsProcessor.LOGGER.log(Level.FINE,
                                 "Flushing the data after 1000 serial stores...");
 
-                        delete.executeBatch();
-                        delete.clearBatch();
+                        deleteStmt.executeBatch();
+                        deleteStmt.clearBatch();
                     }
                 }
             }
 
-            delete.executeBatch();
+            deleteStmt.executeBatch();
             c.setAutoCommit(true);
         } catch (SQLException ex) {
             TransactionsProcessor.LOGGER.log(Level.SEVERE, null, ex);
